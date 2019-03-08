@@ -11,6 +11,8 @@ from skimage.transform import resize
 import math
 from scipy.optimize import leastsq
 
+from argparse import ArgumentParser
+
 def bilinear_interpolation(x, y, points):           # Sorry I did not write this part but cited it from stackoverflow: https://stackoverflow.com/questions/8661537/how-to-perform-bilinear-interpolation-in-python
 
     points = sorted(points)               # order points by x, then by y
@@ -71,151 +73,137 @@ def dx(newimage):           # gradient in x-axis direction
     return (dx1 + dx2) / 2
 
 
-moving = imread(fn('/Users/xiaoxiaozhou/Desktop/Research/ProfGeofferyHugo/B1.png'))
-moving = resize(rgb2gray(moving), [300, 200])
-moving = 255 * moving
-# img = Image.fromarray(moving.astype(np.uint8), 'L')
-# img.save(fn('/Users/xiaoxiaozhou/Desktop/Research/ProfGeofferyHugo/BB.png'))
+if (__name__ == '__main__'):
+    parser = ArgumentParser()
+    parser.add_argument('-f', '--fixed', dest='fixed', help='fixed image name')
+    parser.add_argument('-m', '--moving', dest='moving', help='moving image name')
+    args = parser.parse_args()
 
-fixed = imread(fn('/Users/xiaoxiaozhou/Desktop/Research/ProfGeofferyHugo/A1.png'))
-fixed = resize(rgb2gray(fixed), [300, 200])
-fixed = 255 * fixed
-# img = Image.fromarray(fixed.astype(np.uint8), 'L')
-# img.save(fn('/Users/xiaoxiaozhou/Desktop/Research/ProfGeofferyHugo/AA.png'))
+    moving = imread(fn(args.moving))
+    moving = resize(rgb2gray(moving), [300, 200])
+    moving = 255 * moving
+    # img = Image.fromarray(moving.astype(np.uint8), 'L')
+    # img.save(fn('/Users/xiaoxiaozhou/Desktop/Research/ProfGeofferyHugo/BB.png'))
 
-d = 3
-gridspace = 10              #for 2-d image registration, sampling points are actually each pixel with interval 1
-iteration = 200
-lr = 0.001                  # learning rate
-lamda = 0.001               # regularization coefficient
+    fixed = imread(fn(args.fixed))
+    fixed = resize(rgb2gray(fixed), [300, 200])
+    fixed = 255 * fixed
+    # img = Image.fromarray(fixed.astype(np.uint8), 'L')
+    # img.save(fn('/Users/xiaoxiaozhou/Desktop/Research/ProfGeofferyHugo/AA.png'))
 
-grids = np.zeros([(4+math.ceil(moving.shape[0]/gridspace)),(4+math.ceil(moving.shape[1]/gridspace)), 2])            # 34 * 34 control points, make sure every
-dpfield = np.random.random([(grids.shape[0])*gridspace, (grids.shape[1])*gridspace, 2])                             # 340 * 340 *2 desplacement field, save every pixel's x, y displacement
-newimage = np.zeros(moving.shape)
-bdmap = np.zeros(moving.shape)              # save every pixel's bspline
-plotloss = np.zeros(iteration)              # save every iteration's similarity
-bsplinex = np.zeros((10, 10, d+1))          # save x'direction bspline in one grid
-bspliney = np.zeros((10, 10, d+1))          # save y'direction bspline in one grid
-bsplined = np.zeros((10, 10))               # save tensor product of x,y spline in one grid
+    d = 3
+    gridspace = 10              #for 2-d image registration, sampling points are actually each pixel with interval 1
+    iteration = 200
+    lr = 0.001                  # learning rate
+    lamda = 0.001               # regularization coefficient
 
-# calculate and save each grid's spline
-for i in range(gridspace):
-    for j in range(gridspace):
-        bdx, bdy, bd = bspline(i, j, gridspace)
-        bsplinex[i, j, :] = bdx[:,0]
-        bspliney[i, j, :] = bdy[:,0]
-        bsplined[i, j] = bd
+    grids = np.zeros([(4+math.ceil(moving.shape[0]/gridspace)),(4+math.ceil(moving.shape[1]/gridspace)), 2])            # 34 * 34 control points, make sure every
+    dpfield = np.random.random([(grids.shape[0])*gridspace, (grids.shape[1])*gridspace, 2])                             # 340 * 340 *2 desplacement field, save every pixel's x, y displacement
+    newimage = np.zeros(moving.shape)
+    bdmap = np.zeros(moving.shape)              # save every pixel's bspline
+    plotloss = np.zeros(iteration)              # save every iteration's similarity
+    bsplinex = np.zeros((10, 10, d+1))          # save x'direction bspline in one grid
+    bspliney = np.zeros((10, 10, d+1))          # save y'direction bspline in one grid
+    bsplined = np.zeros((10, 10))               # save tensor product of x,y spline in one grid
 
-# registration
-for ite in range(iteration):
+    # calculate and save each grid's spline
+    for i in range(gridspace):
+        for j in range(gridspace):
+            bdx, bdy, bd = bspline(i, j, gridspace)
+            bsplinex[i, j, :] = bdx[:,0]
+            bspliney[i, j, :] = bdy[:,0]
+            bsplined[i, j] = bd
 
-        for i in range(moving.shape[0]):
-            for j in range(moving.shape[1]):
+    # registration
+    for ite in range(iteration):
 
-                # x axis, closest control point (cpx1, cpy1) in left side of pixel(i, j)
-                cpx1 = (i + 2*gridspace) // (gridspace)
-                cpy1 = (j + 2*gridspace) // (gridspace)           # so 4 control points take right and down 4
-                tx = i - (i//gridspace)*gridspace                 # difference in each grid is normalized
-                ty = j - (j//gridspace)*gridspace
-                # find (i, j) spline
-                bdx = bsplinex[tx, ty, :]
-                bdy = bspliney[tx, ty, :]
-                bdmap[i, j] = bsplined[tx, ty]
+            for i in range(moving.shape[0]):
+                for j in range(moving.shape[1]):
 
-                cx = np.zeros([4, 4])
-                cy = np.zeros([4, 4])
-                for k1 in range(4):
-                    for k2 in range(4):
-                        cx[k1, k2] = dpfield[(cpx1-1+k1) * gridspace, (cpy1-1+k2) * gridspace, 0]           # when k1 = k2 = 0, the top left control point
-                        cy[k1, k2] = dpfield[(cpx1-1+k1) * gridspace, (cpy1-1+k2) * gridspace, 1]           # this displacement is from original control points to new, instead of last time's to now's
+                    # x axis, closest control point (cpx1, cpy1) in left side of pixel(i, j)
+                    cpx1 = (i + 2*gridspace) // (gridspace)
+                    cpy1 = (j + 2*gridspace) // (gridspace)           # so 4 control points take right and down 4
+                    tx = i - (i//gridspace)*gridspace                 # difference in each grid is normalized
+                    ty = j - (j//gridspace)*gridspace
+                    # find (i, j) spline
+                    bdx = bsplinex[tx, ty, :]
+                    bdy = bspliney[tx, ty, :]
+                    bdmap[i, j] = bsplined[tx, ty]
 
-                #calculte (i, j)'s new displacement by spline method, tensor product
-                dpx1 = np.dot(bdx.T, cx)
-                dpx2 = np.dot(dpx1, bdy)
+                    cx = np.zeros([4, 4])
+                    cy = np.zeros([4, 4])
+                    for k1 in range(4):
+                        for k2 in range(4):
+                            cx[k1, k2] = dpfield[(cpx1-1+k1) * gridspace, (cpy1-1+k2) * gridspace, 0]           # when k1 = k2 = 0, the top left control point
+                            cy[k1, k2] = dpfield[(cpx1-1+k1) * gridspace, (cpy1-1+k2) * gridspace, 1]           # this displacement is from original control points to new, instead of last time's to now's
 
-                dpy1 = np.dot(bdx.T, cy)
-                dpy2 = np.dot(dpy1, bdy)
+                    #calculte (i, j)'s new displacement by spline method, tensor product
+                    dpx1 = np.dot(bdx.T, cx)
+                    dpx2 = np.dot(dpx1, bdy)
 
-                dpfield[i + 2 * gridspace, j + 2 * gridspace, 0] = dpx2
-                dpfield[i + 2 * gridspace, j + 2 * gridspace, 1] = dpy2
-                
-                newi = i + dpy2
-                newj = j + dpx2
+                    dpy1 = np.dot(bdx.T, cy)
+                    dpy2 = np.dot(dpy1, bdy)
 
-                if newi < 0 or newi >= moving.shape[0] - 1 or newj < 0 or newj >= moving.shape[1] - 1:
-                    if newi < 0:
-                        newi = 0
-                    elif newi >= moving.shape[0] - 1:
-                        newi = moving.shape[0] - 1
-                    if newj < 0:
-                        newj = 0
-                    elif newj >= moving.shape[1] - 1:
-                        newj = moving.shape[1] - 1
+                    dpfield[i + 2 * gridspace, j + 2 * gridspace, 0] = dpx2
+                    dpfield[i + 2 * gridspace, j + 2 * gridspace, 1] = dpy2
 
-                # backward method find intensity in moving image
-                smalli = math.floor(newi)
-                smallj = math.floor(newj)
-                if smalli == moving.shape[0] - 1 or smallj == moving.shape[1] - 1:
-                    newimage[i, j] = moving[smalli, smallj]
-                else:
-                    surrounding = [(smalli, smallj, moving[smalli, smallj]),
-                                   (smalli, smallj + 1, moving[smalli, smallj + 1]),
-                                   (smalli + 1, smallj, moving[smalli + 1, smallj]),
-                                   (smalli + 1, smallj + 1, moving[smalli + 1, smallj + 1])]
-                    backints = bilinear_interpolation(newi, newj, surrounding)
-                    newimage[i, j] = backints
+                    newi = i + dpy2
+                    newj = j + dpx2
 
-        # newshow = newimage
-        # toobig = np.where(newshow > 255)
-        # newshow[toobig[0], toobig[1]] = 255
-        # toosmall = np.where(newshow < 0)
-        # newshow[toosmall[0], toosmall[1]] = 0
-        # img = Image.fromarray(newshow.astype(np.uint8), 'L')
-        # Image._show(img)
+                    if newi < 0 or newi >= moving.shape[0] - 1 or newj < 0 or newj >= moving.shape[1] - 1:
+                        if newi < 0:
+                            newi = 0
+                        elif newi >= moving.shape[0] - 1:
+                            newi = moving.shape[0] - 1
+                        if newj < 0:
+                            newj = 0
+                        elif newj >= moving.shape[1] - 1:
+                            newj = moving.shape[1] - 1
 
-        similarity = np.sum(abs(newimage - fixed)) / (newimage.size * 255)
+                    # backward method find intensity in moving image
+                    smalli = math.floor(newi)
+                    smallj = math.floor(newj)
+                    if smalli == moving.shape[0] - 1 or smallj == moving.shape[1] - 1:
+                        newimage[i, j] = moving[smalli, smallj]
+                    else:
+                        surrounding = [(smalli, smallj, moving[smalli, smallj]),
+                                       (smalli, smallj + 1, moving[smalli, smallj + 1]),
+                                       (smalli + 1, smallj, moving[smalli + 1, smallj]),
+                                       (smalli + 1, smallj + 1, moving[smalli + 1, smallj + 1])]
+                        backints = bilinear_interpolation(newi, newj, surrounding)
+                        newimage[i, j] = backints
 
-        dlossdi = 2 * (newimage - fixed)
-        didx = dx(newimage)
-        didy = (dx(newimage.T)).T
-        du = np.sqrt(didx**2 + didy**2)
+            # newshow = newimage
+            # toobig = np.where(newshow > 255)
+            # newshow[toobig[0], toobig[1]] = 255
+            # toosmall = np.where(newshow < 0)
+            # newshow[toosmall[0], toosmall[1]] = 0
+            # img = Image.fromarray(newshow.astype(np.uint8), 'L')
+            # Image._show(img)
 
-        didx2 = dx(didx)
-        didy2 = (dx(didy.T)).T
+            similarity = np.sum(abs(newimage - fixed)) / (newimage.size * 255)
 
-        regularizor = -(didx2 + didy2)/(du+0.0001)
+            dlossdi = 2 * (newimage - fixed)
+            didx = dx(newimage)
+            didy = (dx(newimage.T)).T
+            du = np.sqrt(didx**2 + didy**2)
 
-        dpfield[gridspace*2:newimage.shape[0]+gridspace*2,gridspace*2:newimage.shape[1]+gridspace*2, 0] = dpfield[gridspace*2:newimage.shape[0]+gridspace*2,gridspace*2:newimage.shape[1]+gridspace*2, 0] \
-                                                                                                          - lr * dlossdi * didx * bdmap - lamda * regularizor * didx * bdmap
+            didx2 = dx(didx)
+            didy2 = (dx(didy.T)).T
 
-        dpfield[gridspace*2:newimage.shape[0]+gridspace*2,gridspace*2:newimage.shape[1]+gridspace*2, 1] = dpfield[gridspace*2:newimage.shape[0]+gridspace*2,gridspace*2:newimage.shape[1]+gridspace*2, 1] \
-                                                                                                          - lr * dlossdi * didy * bdmap - lamda * regularizor * didy * bdmap
+            regularizor = -(didx2 + didy2)/(du+0.0001)
 
-        plotloss[ite] = np.sqrt(similarity)
-        print(similarity)
+            dpfield[gridspace*2:newimage.shape[0]+gridspace*2,gridspace*2:newimage.shape[1]+gridspace*2, 0] = dpfield[gridspace*2:newimage.shape[0]+gridspace*2,gridspace*2:newimage.shape[1]+gridspace*2, 0] \
+                                                                                                              - lr * dlossdi * didx * bdmap - lamda * regularizor * didx * bdmap
 
+            dpfield[gridspace*2:newimage.shape[0]+gridspace*2,gridspace*2:newimage.shape[1]+gridspace*2, 1] = dpfield[gridspace*2:newimage.shape[0]+gridspace*2,gridspace*2:newimage.shape[1]+gridspace*2, 1] \
+                                                                                                              - lr * dlossdi * didy * bdmap - lamda * regularizor * didy * bdmap
 
-img = Image.fromarray(newimage.astype(np.uint8), 'L')
-img.save(fn('/Users/xiaoxiaozhou/Desktop/Research/ProfGeofferyHugo/newnewnew.png'))
-plt.plot(np.arange(0, iteration), plotloss)
-plt.show()
-
-
+            plotloss[ite] = np.sqrt(similarity)
+            print(similarity)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    img = Image.fromarray(newimage.astype(np.uint8), 'L')
+    img.save(fn('/Users/xiaoxiaozhou/Desktop/Research/ProfGeofferyHugo/newnewnew.png'))
+    plt.plot(np.arange(0, iteration), plotloss)
+    plt.show()
